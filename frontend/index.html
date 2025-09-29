@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Computer Vision App</title>
+    <style>
+      body {
+        text-align: center;
+        background: #111;
+        color: white;
+        font-family: Arial, sans-serif;
+      }
+      video,
+      img {
+        border: 2px solid #444;
+        margin: 10px;
+        max-width: 640px;
+      }
+      video {
+        transform: scaleX(-1); /* mirror preview */
+      }
+      canvas {
+        display: none; /* hide canvas so you don’t see 3 feeds */
+      }
+      select {
+        padding: 5px;
+        margin: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Gesture & Vision Interface</h1>
+    <select id="mode">
+      <option value="gesture">Gesture</option>
+      <option value="sign">Sign</option>
+      <option value="draw">Draw</option>
+      <option value="mouse">Mouse</option>
+      <option value="pose">Pose</option>
+    </select>
+    <br />
+
+    <!-- Show only preview & processed -->
+    <video id="video" autoplay></video>
+    <img id="output" />
+
+    <!-- Hidden canvas (used for sending frames) -->
+    <canvas id="canvas"></canvas>
+
+    <script>
+      const video = document.getElementById("video");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const output = document.getElementById("output");
+      const modeSelect = document.getElementById("mode");
+
+      // Start webcam (only one stream)
+      navigator.mediaDevices
+        .getUserMedia({
+          video: { facingMode: "user" },
+        })
+        .then((stream) => {
+          video.srcObject = stream;
+        });
+
+      // Send frames every 200ms
+      setInterval(() => {
+        if (video.videoWidth === 0) return;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        // 🔹 mirror the frame when drawing to canvas
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.restore();
+
+        const dataURL = canvas.toDataURL("image/jpeg");
+
+        fetch("http://127.0.0.1:5000/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataURL, mode: modeSelect.value }),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.image) {
+              output.src = data.image;
+            } else {
+              console.error("Server error:", data.error);
+            }
+          })
+          .catch((err) => console.error("Fetch error:", err));
+      }, 200);
+    </script>
+  </body>
+</html>
