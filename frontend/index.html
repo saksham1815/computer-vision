@@ -16,14 +16,20 @@
         max-width: 640px;
       }
       video {
-        transform: scaleX(-1); /* mirror preview */
+        transform: scaleX(-1);
       }
       canvas {
-        display: none; /* hide canvas so you don’t see 3 feeds */
+        display: none;
       }
-      select {
+      select,
+      input {
         padding: 5px;
         margin: 10px;
+      }
+      #detected {
+        margin-top: 20px;
+        font-size: 18px;
+        color: #0f0;
       }
     </style>
   </head>
@@ -35,15 +41,19 @@
       <option value="draw">Draw</option>
       <option value="mouse">Mouse</option>
       <option value="pose">Pose</option>
+      <option value="object">Object Detection</option>
+      <option value="face">Face Detection</option>
     </select>
     <br />
 
-    <!-- Show only preview & processed -->
+    <input type="file" id="faceUpload" accept="image/*" />
+    <br />
+
     <video id="video" autoplay></video>
     <img id="output" />
 
-    <!-- Hidden canvas (used for sending frames) -->
     <canvas id="canvas"></canvas>
+    <div id="detected"></div>
 
     <script>
       const video = document.getElementById("video");
@@ -51,12 +61,29 @@
       const ctx = canvas.getContext("2d");
       const output = document.getElementById("output");
       const modeSelect = document.getElementById("mode");
+      const detectedDiv = document.getElementById("detected");
+      const faceUpload = document.getElementById("faceUpload");
 
-      // Start webcam (only one stream)
-      navigator.mediaDevices
-        .getUserMedia({
-          video: { facingMode: "user" },
+      // Upload reference face
+      faceUpload.addEventListener("change", () => {
+        const file = faceUpload.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("image", file);
+
+        fetch("http://127.0.0.1:5000/upload_face", {
+          method: "POST",
+          body: formData,
         })
+          .then((res) => res.json())
+          .then((data) => alert(data.status || data.error))
+          .catch((err) => console.error("Upload error:", err));
+      });
+
+      // Start webcam
+      navigator.mediaDevices
+        .getUserMedia({ video: { facingMode: "user" } })
         .then((stream) => {
           video.srcObject = stream;
         });
@@ -67,7 +94,6 @@
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
 
-        // 🔹 mirror the frame when drawing to canvas
         ctx.save();
         ctx.scale(-1, 1);
         ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
@@ -84,8 +110,11 @@
           .then((data) => {
             if (data.image) {
               output.src = data.image;
+            }
+            if (data.detected && data.detected.length > 0) {
+              detectedDiv.innerText = "Detected: " + data.detected.join(", ");
             } else {
-              console.error("Server error:", data.error);
+              detectedDiv.innerText = "";
             }
           })
           .catch((err) => console.error("Fetch error:", err));
