@@ -55,6 +55,12 @@
     <canvas id="canvas"></canvas>
     <div id="detected"></div>
 
+    <h2>Snapshot (Matched Face)</h2>
+    <img id="snapshot" />
+
+    <h2>Sketch</h2>
+    <img id="sketch" />
+
     <script>
       const video = document.getElementById("video");
       const canvas = document.getElementById("canvas");
@@ -63,6 +69,8 @@
       const modeSelect = document.getElementById("mode");
       const detectedDiv = document.getElementById("detected");
       const faceUpload = document.getElementById("faceUpload");
+      const snapshotImg = document.getElementById("snapshot");
+      const sketchImg = document.getElementById("sketch");
 
       // Upload reference face
       faceUpload.addEventListener("change", () => {
@@ -88,7 +96,7 @@
           video.srcObject = stream;
         });
 
-      // Send frames every 200ms
+      // Send frames every 250ms
       setInterval(() => {
         if (video.videoWidth === 0) return;
         canvas.width = video.videoWidth;
@@ -108,17 +116,17 @@
         })
           .then((res) => res.json())
           .then((data) => {
-            if (data.image) {
-              output.src = data.image;
-            }
+            if (data.image) output.src = data.image;
             if (data.detected && data.detected.length > 0) {
               detectedDiv.innerText = "Detected: " + data.detected.join(", ");
             } else {
               detectedDiv.innerText = "";
             }
+            if (data.snapshot) snapshotImg.src = data.snapshot;
+            if (data.sketch) sketchImg.src = data.sketch;
           })
           .catch((err) => console.error("Fetch error:", err));
-      }, 200);
+      }, 250);
     </script>
   </body>
 </html>
