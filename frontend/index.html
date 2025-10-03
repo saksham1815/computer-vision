@@ -31,6 +31,11 @@
         font-size: 18px;
         color: #0f0;
       }
+      #extraImages img {
+        margin: 10px;
+        max-width: 200px;
+        border: 2px solid #0f0;
+      }
     </style>
   </head>
   <body>
@@ -55,11 +60,12 @@
     <canvas id="canvas"></canvas>
     <div id="detected"></div>
 
-    <h2>Snapshot (Matched Face)</h2>
-    <img id="snapshot" />
-
-    <h2>Sketch</h2>
-    <img id="sketch" />
+    <!-- Snapshot & Sketch -->
+    <div id="extraImages">
+      <h3>Matched Face Snapshot & Sketch</h3>
+      <img id="snapshot" />
+      <img id="sketch" />
+    </div>
 
     <script>
       const video = document.getElementById("video");
@@ -71,6 +77,16 @@
       const faceUpload = document.getElementById("faceUpload");
       const snapshotImg = document.getElementById("snapshot");
       const sketchImg = document.getElementById("sketch");
+
+      // Restore last mode from localStorage
+      window.onload = () => {
+        const savedMode = localStorage.getItem("selectedMode");
+        if (savedMode) modeSelect.value = savedMode;
+      };
+
+      modeSelect.addEventListener("change", () => {
+        localStorage.setItem("selectedMode", modeSelect.value);
+      });
 
       // Upload reference face
       faceUpload.addEventListener("change", () => {
@@ -96,7 +112,7 @@
           video.srcObject = stream;
         });
 
-      // Send frames every 250ms
+      // Poll backend
       setInterval(() => {
         if (video.videoWidth === 0) return;
         canvas.width = video.videoWidth;
@@ -117,16 +133,19 @@
           .then((res) => res.json())
           .then((data) => {
             if (data.image) output.src = data.image;
+
             if (data.detected && data.detected.length > 0) {
               detectedDiv.innerText = "Detected: " + data.detected.join(", ");
             } else {
               detectedDiv.innerText = "";
             }
+
+            // Only update if backend sends new snapshot/sketch
             if (data.snapshot) snapshotImg.src = data.snapshot;
             if (data.sketch) sketchImg.src = data.sketch;
           })
           .catch((err) => console.error("Fetch error:", err));
-      }, 250);
+      }, 200);
     </script>
   </body>
 </html>
