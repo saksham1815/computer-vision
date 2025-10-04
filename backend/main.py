@@ -4,13 +4,11 @@ import cv2, base64, numpy as np, os, time
 from ultralytics import YOLO
 import face_recognition
 
-# YOLO for object detection
+# Initialize models
 yolo_model = YOLO("yolov8n.pt")
-
-# Haar Cascade for sketch effect
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
-# Utils safe imports
+# Safe utility imports
 try:
     from utils.hand_utils import detect_hands
     from utils.pose_utils import detect_pose
@@ -24,18 +22,21 @@ except ImportError:
     def air_draw(frame, points): return frame, points
     def control_mouse(frame): return None
 
+# Flask setup
 app = Flask(__name__)
 CORS(app)
 
 draw_points = []
 mode = "gesture"
 reference_encoding = None
+target_object = None
+last_snapshot_time = 0
+last_detected_object = None  # For preventing repeated saves
 
 SAVE_DIR = "snapshots"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-last_snapshot_time = 0  # throttle snapshots
-
+# ---------- Utility Functions ----------
 def decode_image(img_base64):
     if "," in img_base64:
         img_base64 = img_base64.split(",")[1]
@@ -54,8 +55,10 @@ def sketch_face(face_img):
     sketch = cv2.divide(gray, 255 - blur, scale=256)
     return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
+# ---------- Routes ----------
 @app.route("/upload_face", methods=["POST"])
 def upload_face():
+    """Upload reference face for matching."""
     global reference_encoding
     file = request.files.get("image")
     if not file:
@@ -63,8 +66,8 @@ def upload_face():
 
     np_img = np.frombuffer(file.read(), np.uint8)
     img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
-
     encodings = face_recognition.face_encodings(img)
+
     if len(encodings) > 0:
         reference_encoding = encodings[0]
         return jsonify({"status": "Reference face stored"})
@@ -73,17 +76,18 @@ def upload_face():
 
 @app.route("/process", methods=["POST"])
 def process():
-    global mode, draw_points, reference_encoding, last_snapshot_time
+    """Main processing route for all modes."""
+    global mode, draw_points, reference_encoding, last_snapshot_time, target_object, last_detected_object
+
     try:
         data = request.json
         frame = decode_image(data["image"])
-        if "mode" in data:
-            mode = data["mode"]
+        mode = data.get("mode", mode)
 
         detected_labels = []
-        snapshot_b64 = None
-        sketch_b64 = None
+        snapshot_b64, sketch_b64, object_snapshot_b64 = None, None, None
 
+        # --- Mode Handling ---
         if mode == "gesture":
             frame = detect_hands(frame)
 
@@ -102,17 +106,36 @@ def process():
             frame = detect_pose(frame)
 
         elif mode == "object":
+            object_name = data.get("object_name", "").strip().lower()
+            if object_name:
+                target_object = object_name
+
             results = yolo_model(frame)
+            found_target = False
+
             for r in results:
                 for box in r.boxes:
                     cls_id = int(box.cls[0])
                     label = yolo_model.names[cls_id]
                     detected_labels.append(label)
-
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                    color = (0, 255, 0) if (target_object and label.lower() == target_object) else (255, 255, 0)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(frame, label, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                    if target_object and label.lower() == target_object:
+                        found_target = True
+                        if last_detected_object != target_object:
+                            last_detected_object = target_object
+                            obj_crop = frame[y1:y2, x1:x2]
+                            save_path = os.path.join(SAVE_DIR, f"{label}_{int(time.time())}.jpg")
+                            cv2.imwrite(save_path, obj_crop)
+                            object_snapshot_b64 = encode_image(obj_crop)
+
+            if not found_target:
+                last_detected_object = None
 
         elif mode == "face":
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -126,9 +149,8 @@ def process():
                     if matches[0]:
                         label = "Matched"
                         now = time.time()
-                        if now - last_snapshot_time > 2:  # throttle
+                        if now - last_snapshot_time > 2:
                             last_snapshot_time = now
-
                             face_crop = frame[top:bottom, left:right]
                             snapshot_b64 = encode_image(face_crop)
                             sketch_b64 = encode_image(sketch_face(face_crop))
@@ -138,11 +160,13 @@ def process():
                 cv2.putText(frame, label, (left, top - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
+        # --- Return Response ---
         return jsonify({
             "image": encode_image(frame),
             "detected": detected_labels,
             "snapshot": snapshot_b64,
-            "sketch": sketch_b64
+            "sketch": sketch_b64,
+            "object_snapshot": object_snapshot_b64
         })
 
     except Exception as e:
@@ -150,7 +174,7 @@ def process():
 
 @app.route("/")
 def home():
-    return "Flask server is running!"
+    return "✅ Flask server running with gesture, pose, face & object detection!"
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)

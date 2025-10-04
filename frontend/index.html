@@ -22,9 +22,11 @@
         display: none;
       }
       select,
-      input {
-        padding: 5px;
-        margin: 10px;
+      input,
+      button {
+        padding: 6px;
+        margin: 8px;
+        font-size: 14px;
       }
       #detected {
         margin-top: 20px;
@@ -35,11 +37,17 @@
         margin: 10px;
         max-width: 200px;
         border: 2px solid #0f0;
+        border-radius: 8px;
+      }
+      #objectSearch {
+        display: none;
       }
     </style>
   </head>
+
   <body>
     <h1>Gesture & Vision Interface</h1>
+
     <select id="mode">
       <option value="gesture">Gesture</option>
       <option value="sign">Sign</option>
@@ -49,22 +57,30 @@
       <option value="object">Object Detection</option>
       <option value="face">Face Detection</option>
     </select>
-    <br />
 
+    <input
+      type="text"
+      id="objectSearch"
+      placeholder="Enter object (e.g., cup, chair)"
+    />
+
+    <br />
     <input type="file" id="faceUpload" accept="image/*" />
     <br />
 
     <video id="video" autoplay></video>
     <img id="output" />
-
     <canvas id="canvas"></canvas>
+
     <div id="detected"></div>
 
-    <!-- Snapshot & Sketch -->
     <div id="extraImages">
-      <h3>Matched Face Snapshot & Sketch</h3>
-      <img id="snapshot" />
-      <img id="sketch" />
+      <h3>Captured Results</h3>
+      <div>
+        <img id="snapshot" />
+        <img id="sketch" />
+      </div>
+      <div id="objectGallery"></div>
     </div>
 
     <script>
@@ -77,22 +93,32 @@
       const faceUpload = document.getElementById("faceUpload");
       const snapshotImg = document.getElementById("snapshot");
       const sketchImg = document.getElementById("sketch");
+      const objectInput = document.getElementById("objectSearch");
+      const objectGallery = document.getElementById("objectGallery");
 
-      // Restore last mode from localStorage
+      let lastObjectShown = null;
+
+      // Restore last mode
       window.onload = () => {
         const savedMode = localStorage.getItem("selectedMode");
         if (savedMode) modeSelect.value = savedMode;
+        toggleObjectInput();
       };
 
       modeSelect.addEventListener("change", () => {
         localStorage.setItem("selectedMode", modeSelect.value);
+        toggleObjectInput();
       });
+
+      function toggleObjectInput() {
+        objectInput.style.display =
+          modeSelect.value === "object" ? "inline-block" : "none";
+      }
 
       // Upload reference face
       faceUpload.addEventListener("change", () => {
         const file = faceUpload.files[0];
         if (!file) return;
-
         const formData = new FormData();
         formData.append("image", file);
 
@@ -108,11 +134,9 @@
       // Start webcam
       navigator.mediaDevices
         .getUserMedia({ video: { facingMode: "user" } })
-        .then((stream) => {
-          video.srcObject = stream;
-        });
+        .then((stream) => (video.srcObject = stream));
 
-      // Poll backend
+      // Poll backend every 200 ms
       setInterval(() => {
         if (video.videoWidth === 0) return;
         canvas.width = video.videoWidth;
@@ -124,25 +148,38 @@
         ctx.restore();
 
         const dataURL = canvas.toDataURL("image/jpeg");
+        const objName = objectInput.value.trim().toLowerCase();
 
         fetch("http://127.0.0.1:5000/process", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: dataURL, mode: modeSelect.value }),
+          body: JSON.stringify({
+            image: dataURL,
+            mode: modeSelect.value,
+            object_name: objName,
+          }),
         })
           .then((res) => res.json())
           .then((data) => {
             if (data.image) output.src = data.image;
 
-            if (data.detected && data.detected.length > 0) {
+            if (data.detected?.length) {
               detectedDiv.innerText = "Detected: " + data.detected.join(", ");
-            } else {
-              detectedDiv.innerText = "";
-            }
+            } else detectedDiv.innerText = "";
 
-            // Only update if backend sends new snapshot/sketch
             if (data.snapshot) snapshotImg.src = data.snapshot;
             if (data.sketch) sketchImg.src = data.sketch;
+
+            if (
+              data.object_snapshot &&
+              data.object_snapshot !== lastObjectShown
+            ) {
+              const img = document.createElement("img");
+              img.src = data.object_snapshot;
+              img.alt = "Detected Object";
+              objectGallery.appendChild(img);
+              lastObjectShown = data.object_snapshot;
+            }
           })
           .catch((err) => console.error("Fetch error:", err));
       }, 200);
