@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Computer Vision App</title>
+    <title>Gesture & Vision Interface with Location</title>
     <style>
       body {
         text-align: center;
@@ -18,20 +18,14 @@
       video {
         transform: scaleX(-1);
       }
-      canvas {
-        display: none;
-      }
-      select,
-      input,
-      button {
-        padding: 6px;
-        margin: 8px;
-        font-size: 14px;
-      }
       #detected {
-        margin-top: 20px;
+        margin-top: 10px;
         font-size: 18px;
         color: #0f0;
+      }
+      #geoInfo {
+        font-size: 16px;
+        color: #0ff;
       }
       #extraImages img {
         margin: 10px;
@@ -46,7 +40,7 @@
   </head>
 
   <body>
-    <h1>Gesture & Vision Interface</h1>
+    <h1>Gesture & Vision Interface 🌍</h1>
 
     <select id="mode">
       <option value="gesture">Gesture</option>
@@ -58,28 +52,22 @@
       <option value="face">Face Detection</option>
     </select>
 
-    <input
-      type="text"
-      id="objectSearch"
-      placeholder="Enter object (e.g., cup, chair)"
-    />
-
+    <input id="objectSearch" placeholder="Enter object (e.g. chair, cup)" />
     <br />
     <input type="file" id="faceUpload" accept="image/*" />
     <br />
 
-    <video id="video" autoplay></video>
+    <video id="video" autoplay playsinline></video>
     <img id="output" />
-    <canvas id="canvas"></canvas>
+    <canvas id="canvas" style="display: none"></canvas>
 
     <div id="detected"></div>
+    <div id="geoInfo"></div>
 
     <div id="extraImages">
       <h3>Captured Results</h3>
-      <div>
-        <img id="snapshot" />
-        <img id="sketch" />
-      </div>
+      <img id="snapshot" />
+      <img id="sketch" />
       <div id="objectGallery"></div>
     </div>
 
@@ -95,25 +83,26 @@
       const sketchImg = document.getElementById("sketch");
       const objectInput = document.getElementById("objectSearch");
       const objectGallery = document.getElementById("objectGallery");
+      const geoDiv = document.getElementById("geoInfo");
 
-      let lastObjectShown = null;
+      let latitude = null,
+        longitude = null,
+        lastObjectShown = null;
 
-      // Restore last mode
-      window.onload = () => {
-        const savedMode = localStorage.getItem("selectedMode");
-        if (savedMode) modeSelect.value = savedMode;
-        toggleObjectInput();
-      };
-
-      modeSelect.addEventListener("change", () => {
-        localStorage.setItem("selectedMode", modeSelect.value);
-        toggleObjectInput();
-      });
+      // Get geolocation once
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((pos) => {
+          latitude = pos.coords.latitude;
+          longitude = pos.coords.longitude;
+        });
+      }
 
       function toggleObjectInput() {
         objectInput.style.display =
           modeSelect.value === "object" ? "inline-block" : "none";
       }
+      modeSelect.addEventListener("change", toggleObjectInput);
+      toggleObjectInput();
 
       // Upload reference face
       faceUpload.addEventListener("change", () => {
@@ -121,7 +110,6 @@
         if (!file) return;
         const formData = new FormData();
         formData.append("image", file);
-
         fetch("http://127.0.0.1:5000/upload_face", {
           method: "POST",
           body: formData,
@@ -136,12 +124,15 @@
         .getUserMedia({ video: { facingMode: "user" } })
         .then((stream) => (video.srcObject = stream));
 
-      // Poll backend every 200 ms
-      setInterval(() => {
-        if (video.videoWidth === 0) return;
+      // Smooth stream loop
+      async function sendFrame() {
+        if (!video.videoWidth) {
+          requestAnimationFrame(sendFrame);
+          return;
+        }
+
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-
         ctx.save();
         ctx.scale(-1, 1);
         ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
@@ -150,39 +141,50 @@
         const dataURL = canvas.toDataURL("image/jpeg");
         const objName = objectInput.value.trim().toLowerCase();
 
-        fetch("http://127.0.0.1:5000/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image: dataURL,
-            mode: modeSelect.value,
-            object_name: objName,
-          }),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.image) output.src = data.image;
+        try {
+          const res = await fetch("http://127.0.0.1:5000/process", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image: dataURL,
+              mode: modeSelect.value,
+              object_name: objName,
+              latitude: latitude,
+              longitude: longitude,
+            }),
+          });
+          const data = await res.json();
 
-            if (data.detected?.length) {
-              detectedDiv.innerText = "Detected: " + data.detected.join(", ");
-            } else detectedDiv.innerText = "";
+          if (data.image) output.src = data.image;
+          if (data.detected?.length)
+            detectedDiv.innerText = "Detected: " + data.detected.join(", ");
+          else detectedDiv.innerText = "";
 
-            if (data.snapshot) snapshotImg.src = data.snapshot;
-            if (data.sketch) sketchImg.src = data.sketch;
+          if (data.geo_info && data.geo_info.latitude) {
+            geoDiv.innerText = `📍 Location: ${data.geo_info.latitude}, ${data.geo_info.longitude}`;
+          }
 
-            if (
-              data.object_snapshot &&
-              data.object_snapshot !== lastObjectShown
-            ) {
-              const img = document.createElement("img");
-              img.src = data.object_snapshot;
-              img.alt = "Detected Object";
-              objectGallery.appendChild(img);
-              lastObjectShown = data.object_snapshot;
-            }
-          })
-          .catch((err) => console.error("Fetch error:", err));
-      }, 200);
+          if (data.snapshot) snapshotImg.src = data.snapshot;
+          if (data.sketch) sketchImg.src = data.sketch;
+
+          if (
+            data.object_snapshot &&
+            data.object_snapshot !== lastObjectShown
+          ) {
+            const img = document.createElement("img");
+            img.src = data.object_snapshot;
+            img.alt = "Detected Object";
+            objectGallery.appendChild(img);
+            lastObjectShown = data.object_snapshot;
+          }
+        } catch (err) {
+          console.error("Fetch error:", err);
+        }
+
+        requestAnimationFrame(sendFrame); // smooth loop instead of interval
+      }
+
+      sendFrame(); // start
     </script>
   </body>
 </html>
