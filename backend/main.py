@@ -3,6 +3,7 @@ from flask_cors import CORS
 import cv2, base64, numpy as np, os, time
 from ultralytics import YOLO
 import face_recognition
+from deepface import DeepFace  # NEW import
 
 # Load models
 yolo_model = YOLO("yolov8n.pt")
@@ -34,6 +35,7 @@ last_detection_time = 0
 last_detected_label = None
 SAVE_DIR = "snapshots"
 os.makedirs(SAVE_DIR, exist_ok=True)
+last_face_results = {"locations": [], "labels": [], "snapshot": None, "sketch": None}
 
 # ---------- Utility Functions ----------
 def decode_image(img_base64):
@@ -84,7 +86,7 @@ def upload_face():
 
 @app.route("/process", methods=["POST"])
 def process():
-    global mode, draw_points, reference_encoding, last_detection_time, last_detected_label, target_object
+    global mode, draw_points, reference_encoding, last_detection_time, last_detected_label, target_object, last_face_results
 
     try:
         data = request.json
@@ -150,37 +152,72 @@ def process():
                         else:
                             obj_crop = frame[y1:y2, x1:x2]
                             object_snapshot_b64 = encode_image(obj_crop)
+        elif mode == "emotion":
+            try:
+                result = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
+                dominant_emotion = result[0]['dominant_emotion']
+                cv2.putText(frame, f"Emotion: {dominant_emotion}", (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                detected_labels.append(dominant_emotion)
+            except Exception as e:
+                cv2.putText(frame, "Emotion: Error", (10, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                detected_labels.append("Error")
 
-        # ---------- Face Detection + Geolocation ----------
+        # ---------- Face Detection + Geolocation (Optimized) ----------
         elif mode == "face":
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_locations = face_recognition.face_locations(rgb_frame)
-            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+            now = time.time()
 
-            for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
-                label = "Unknown"
-                if reference_encoding is not None:
-                    matches = face_recognition.compare_faces([reference_encoding], face_encoding)
-                    if matches[0]:
-                        label = "Matched"
-                        now = time.time()
-                        if now - last_detection_time > 2:
-                            last_detection_time = now
-                            face_crop = frame[top:bottom, left:right]
-                            snapshot_b64 = encode_image(face_crop)
-                            sketch_b64 = encode_image(sketch_face(face_crop))
+            # Run detection every 0.5 sec only, else reuse last results
+            if now - last_detection_time > 0.5:
+                small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+                rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-                            # Save snapshot with geolocation if available
-                            filename = f"face_{int(now)}"
-                            if geo_info:
-                                filename += f"_{latitude}_{longitude}"
-                            filename += ".jpg"
-                            cv2.imwrite(os.path.join(SAVE_DIR, filename), face_crop)
+                face_locations = face_recognition.face_locations(rgb_small)
+                face_encodings = face_recognition.face_encodings(rgb_small, face_locations)
 
-                detected_labels.append(label)
-                cv2.rectangle(frame, (left, top), (right, bottom), (255, 0, 0), 2)
-                cv2.putText(frame, label, (left, top - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                new_labels = []
+                for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+                    top, right, bottom, left = [v * 4 for v in (top, right, bottom, left)]
+                    label = "Unknown"
+
+                    if reference_encoding is not None:
+                        matches = face_recognition.compare_faces([reference_encoding], face_encoding)
+                        if matches[0]:
+                            label = "Matched"
+                            if now - last_detection_time > 2:
+                                face_crop = frame[top:bottom, left:right]
+                                snapshot_b64 = encode_image(face_crop)
+                                sketch_b64 = encode_image(sketch_face(face_crop))
+                                filename = f"face_{int(now)}"
+                                if geo_info:
+                                    filename += f"_{latitude}_{longitude}"
+                                filename += ".jpg"
+                                cv2.imwrite(os.path.join(SAVE_DIR, filename), face_crop)
+                                last_face_results["snapshot"] = snapshot_b64
+                                last_face_results["sketch"] = sketch_b64
+
+                    new_labels.append(label)
+                    cv2.rectangle(frame, (left, top), (right, bottom), (255, 0, 0), 2)
+                    cv2.putText(frame, label, (left, top - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+                last_face_results["locations"] = face_locations
+                last_face_results["labels"] = new_labels
+                last_detection_time = now
+            else:
+                # Reuse last detections for smoother playback
+                for (top, right, bottom, left), label in zip(
+                    last_face_results["locations"], last_face_results["labels"]
+                ):
+                    top, right, bottom, left = [v * 4 for v in (top, right, bottom, left)]
+                    cv2.rectangle(frame, (left, top), (right, bottom), (255, 0, 0), 2)
+                    cv2.putText(frame, label, (left, top - 10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                snapshot_b64 = last_face_results.get("snapshot")
+                sketch_b64 = last_face_results.get("sketch")
+
+            detected_labels.extend(last_face_results["labels"])
 
         return jsonify({
             "image": encode_image(frame),

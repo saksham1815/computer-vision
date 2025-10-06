@@ -37,6 +37,7 @@
         display: none;
       }
     </style>
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
   </head>
 
   <body>
@@ -50,6 +51,8 @@
       <option value="pose">Pose</option>
       <option value="object">Object Detection</option>
       <option value="face">Face Detection</option>
+      <option value="emotion">Emotion Detection</option>
+      <!-- NEW -->
     </select>
 
     <input id="objectSearch" placeholder="Enter object (e.g. chair, cup)" />
@@ -156,9 +159,15 @@
           const data = await res.json();
 
           if (data.image) output.src = data.image;
-          if (data.detected?.length)
+          if (data.detected?.length) {
+            const emotion = data.detected[0];
+            let color = "white";
+            if (emotion === "happy") color = "limegreen";
+            else if (emotion === "sad") color = "skyblue";
+            else if (emotion === "angry") color = "red";
+            detectedDiv.style.color = color;
             detectedDiv.innerText = "Detected: " + data.detected.join(", ");
-          else detectedDiv.innerText = "";
+          } else detectedDiv.innerText = "";
 
           if (data.geo_info && data.geo_info.latitude) {
             geoDiv.innerText = `📍 Location: ${data.geo_info.latitude}, ${data.geo_info.longitude}`;
