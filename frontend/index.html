@@ -9,15 +9,34 @@
         color: white;
         font-family: Arial, sans-serif;
       }
-      video,
-      img {
+      .video-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      #mainVideo,
+      #previewVideo {
         border: 2px solid #444;
-        margin: 10px;
-        max-width: 640px;
+        border-radius: 10px;
+        object-fit: cover;
       }
-      video {
+
+      #mainVideo {
+        width: 500px;
+        height: 500px;
         transform: scaleX(-1);
+        /* #mirror webcam; */
       }
+
+      #previewVideo {
+        width: 500px;
+        height: 500px;
+      }
+
       #detected {
         margin-top: 10px;
         font-size: 18px;
@@ -37,7 +56,6 @@
         display: none;
       }
     </style>
-    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
   </head>
 
   <body>
@@ -52,7 +70,7 @@
       <option value="object">Object Detection</option>
       <option value="face">Face Detection</option>
       <option value="emotion">Emotion Detection</option>
-      <!-- NEW -->
+      <option value="ocr">Text Extraction (OCR)</option>
     </select>
 
     <input id="objectSearch" placeholder="Enter object (e.g. chair, cup)" />
@@ -60,8 +78,11 @@
     <input type="file" id="faceUpload" accept="image/*" />
     <br />
 
-    <video id="video" autoplay playsinline></video>
-    <img id="output" />
+    <div class="video-container">
+      <video id="mainVideo" autoplay playsinline></video>
+      <img id="previewVideo" />
+    </div>
+
     <canvas id="canvas" style="display: none"></canvas>
 
     <div id="detected"></div>
@@ -75,10 +96,10 @@
     </div>
 
     <script>
-      const video = document.getElementById("video");
+      const video = document.getElementById("mainVideo");
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
-      const output = document.getElementById("output");
+      const output = document.getElementById("previewVideo");
       const modeSelect = document.getElementById("mode");
       const detectedDiv = document.getElementById("detected");
       const faceUpload = document.getElementById("faceUpload");
@@ -90,7 +111,9 @@
 
       let latitude = null,
         longitude = null,
-        lastObjectShown = null;
+        lastObjectShown = null,
+        lastSentTime = 0;
+      const SEND_INTERVAL = 200; // ~5 FPS for smoother experience
 
       // Get geolocation once
       if (navigator.geolocation) {
@@ -127,21 +150,33 @@
         .getUserMedia({ video: { facingMode: "user" } })
         .then((stream) => (video.srcObject = stream));
 
-      // Smooth stream loop
-      async function sendFrame() {
+      // Smooth async loop (throttled)
+      async function processFrame() {
+        const now = performance.now();
+        if (now - lastSentTime < SEND_INTERVAL) {
+          requestAnimationFrame(processFrame);
+          return;
+        }
+        lastSentTime = now;
+
         if (!video.videoWidth) {
-          requestAnimationFrame(sendFrame);
+          requestAnimationFrame(processFrame);
           return;
         }
 
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Resize to smaller frame for faster processing
+        const scaledWidth = 320;
+        const scaledHeight =
+          (video.videoHeight / video.videoWidth) * scaledWidth;
+        canvas.width = scaledWidth;
+        canvas.height = scaledHeight;
+
         ctx.save();
         ctx.scale(-1, 1);
-        ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, -scaledWidth, 0, scaledWidth, scaledHeight);
         ctx.restore();
 
-        const dataURL = canvas.toDataURL("image/jpeg");
+        const dataURL = canvas.toDataURL("image/jpeg", 0.6);
         const objName = objectInput.value.trim().toLowerCase();
 
         try {
@@ -160,18 +195,17 @@
 
           if (data.image) output.src = data.image;
           if (data.detected?.length) {
-            const emotion = data.detected[0];
+            const first = data.detected[0];
             let color = "white";
-            if (emotion === "happy") color = "limegreen";
-            else if (emotion === "sad") color = "skyblue";
-            else if (emotion === "angry") color = "red";
+            if (first === "happy") color = "limegreen";
+            else if (first === "sad") color = "skyblue";
+            else if (first === "angry") color = "red";
             detectedDiv.style.color = color;
             detectedDiv.innerText = "Detected: " + data.detected.join(", ");
           } else detectedDiv.innerText = "";
 
-          if (data.geo_info && data.geo_info.latitude) {
+          if (data.geo_info?.latitude)
             geoDiv.innerText = `📍 Location: ${data.geo_info.latitude}, ${data.geo_info.longitude}`;
-          }
 
           if (data.snapshot) snapshotImg.src = data.snapshot;
           if (data.sketch) sketchImg.src = data.sketch;
@@ -190,10 +224,10 @@
           console.error("Fetch error:", err);
         }
 
-        requestAnimationFrame(sendFrame); // smooth loop instead of interval
+        requestAnimationFrame(processFrame);
       }
 
-      sendFrame(); // start
+      requestAnimationFrame(processFrame);
     </script>
   </body>
 </html>
