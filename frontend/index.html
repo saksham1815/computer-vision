@@ -1,99 +1,214 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <title>Gesture & Vision Interface with Location</title>
+    <meta charset="UTF-8" />
+    <title>Vision WebCam Processor</title>
     <style>
       body {
-        text-align: center;
-        background: #111;
-        color: white;
-        font-family: Arial, sans-serif;
-      }
-      .video-container {
+        margin: 0;
+        background-color: #111317;
+        font-family: "Segoe UI", Arial, sans-serif;
+        color: #eee;
         display: flex;
         justify-content: center;
         align-items: center;
-        gap: 20px;
-        flex-wrap: wrap;
+        height: 100vh;
+      }
+
+      .app-container {
+        width: 90%;
+        height: 90%;
+        background-color: #1a1d24;
+        border-radius: 16px;
+        display: flex;
+        box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
+        overflow: hidden;
+      }
+
+      /* Left control panel */
+      .control-panel {
+        width: 280px;
+        background-color: #20232b;
+        border-right: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+      }
+
+      .control-panel h2 {
+        font-size: 18px;
+        margin-bottom: 10px;
+        color: #4fc3f7;
+      }
+
+      label {
+        font-size: 14px;
+        color: #ccc;
         margin-top: 10px;
       }
 
-      #mainVideo,
-      #previewVideo {
-        border: 2px solid #444;
-        border-radius: 10px;
+      select,
+      input[type="file"],
+      input[type="text"] {
+        background-color: #2b2f38;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px;
+        width: 100%;
+        margin-top: 6px;
+      }
+
+      select:focus,
+      input:focus {
+        outline: 2px solid #4fc3f7;
+      }
+
+      .btn {
+        background-color: #4fc3f7;
+        border: none;
+        border-radius: 6px;
+        padding: 10px;
+        color: #000;
+        font-weight: bold;
+        margin-top: 12px;
+        cursor: pointer;
+      }
+
+      .btn:hover {
+        background-color: #5ed8ff;
+      }
+
+      #objectSearch {
+        display: none;
+        margin-top: 10px;
+      }
+
+      #facePreview {
+        width: 100%;
+        border-radius: 8px;
+        margin-top: 10px;
+        display: none;
+      }
+
+      #uploadStatus {
+        font-size: 12px;
+        color: #8bc34a;
+        margin-top: 5px;
+        min-height: 18px;
+      }
+
+      /* Right video section */
+      .video-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 20px;
+        gap: 10px;
+      }
+
+      .video-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+      }
+
+      video,
+      img {
+        width: 100%;
+        border-radius: 12px;
         object-fit: cover;
+        border: 2px solid #2b2f38;
+        background: #000;
       }
 
       #mainVideo {
-        width: 500px;
-        height: 500px;
-        transform: scaleX(-1);
-        /* #mirror webcam; */
+        transform: scaleX(-1); /* Mirror webcam feed */
       }
 
-      #previewVideo {
-        width: 500px;
-        height: 500px;
+      .info-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background-color: #20232b;
+        padding: 10px 20px;
+        border-radius: 8px;
+        margin-top: 8px;
+        font-size: 14px;
+      }
+
+      .info-bar span {
+        color: #4fc3f7;
       }
 
       #detected {
+        color: #4caf50;
+        font-weight: bold;
+      }
+
+      #extraImages {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
         margin-top: 10px;
-        font-size: 18px;
-        color: #0f0;
       }
-      #geoInfo {
-        font-size: 16px;
-        color: #0ff;
-      }
+
       #extraImages img {
-        margin: 10px;
-        max-width: 200px;
-        border: 2px solid #0f0;
+        width: 100px;
+        border: 1px solid #444;
         border-radius: 8px;
-      }
-      #objectSearch {
-        display: none;
       }
     </style>
   </head>
 
   <body>
-    <h1>Gesture & Vision Interface 🌍</h1>
+    <div class="app-container">
+      <!-- Left Control Panel -->
+      <div class="control-panel">
+        <h2>Control Panel</h2>
+        <label for="mode">Select Processing Mode:</label>
+        <select id="mode">
+          <option value="gesture">Gesture Recognition</option>
+          <option value="sign">Sign Language</option>
+          <option value="draw">Air Drawing</option>
+          <option value="mouse">Mouse Control</option>
+          <option value="pose">Pose Estimation</option>
+          <option value="object">Object Detection</option>
+          <option value="face">Face Detection</option>
+          <option value="emotion">Emotion Detection</option>
+          <option value="ocr">Text Extraction (OCR)</option>
+        </select>
 
-    <select id="mode">
-      <option value="gesture">Gesture</option>
-      <option value="sign">Sign</option>
-      <option value="draw">Draw</option>
-      <option value="mouse">Mouse</option>
-      <option value="pose">Pose</option>
-      <option value="object">Object Detection</option>
-      <option value="face">Face Detection</option>
-      <option value="emotion">Emotion Detection</option>
-      <option value="ocr">Text Extraction (OCR)</option>
-    </select>
+        <input id="objectSearch" placeholder="Search for Object in Frame" />
 
-    <input id="objectSearch" placeholder="Enter object (e.g. chair, cup)" />
-    <br />
-    <input type="file" id="faceUpload" accept="image/*" />
-    <br />
+        <label for="faceUpload">Upload Reference Face:</label>
+        <input type="file" id="faceUpload" accept="image/*" />
+        <img id="facePreview" />
+        <div id="uploadStatus"></div>
 
-    <div class="video-container">
-      <video id="mainVideo" autoplay playsinline></video>
-      <img id="previewVideo" />
+        <button class="btn" id="capture">Capture Snapshot</button>
+      </div>
+
+      <!-- Right Video Section -->
+      <div class="video-section">
+        <div class="video-grid">
+          <video id="mainVideo" autoplay playsinline></video>
+          <img id="previewVideo" />
+        </div>
+
+        <div class="info-bar">
+          <div id="detected">Waiting for input...</div>
+          <div id="geoInfo">📍 Locating...</div>
+        </div>
+
+        <div id="extraImages">
+          <img id="snapshot" />
+          <img id="sketch" />
+        </div>
+      </div>
     </div>
 
     <canvas id="canvas" style="display: none"></canvas>
-
-    <div id="detected"></div>
-    <div id="geoInfo"></div>
-
-    <div id="extraImages">
-      <h3>Captured Results</h3>
-      <img id="snapshot" />
-      <img id="sketch" />
-      <div id="objectGallery"></div>
-    </div>
 
     <script>
       const video = document.getElementById("mainVideo");
@@ -103,54 +218,73 @@
       const modeSelect = document.getElementById("mode");
       const detectedDiv = document.getElementById("detected");
       const faceUpload = document.getElementById("faceUpload");
+      const facePreview = document.getElementById("facePreview");
+      const uploadStatus = document.getElementById("uploadStatus");
       const snapshotImg = document.getElementById("snapshot");
       const sketchImg = document.getElementById("sketch");
       const objectInput = document.getElementById("objectSearch");
-      const objectGallery = document.getElementById("objectGallery");
       const geoDiv = document.getElementById("geoInfo");
 
       let latitude = null,
         longitude = null,
-        lastObjectShown = null,
         lastSentTime = 0;
-      const SEND_INTERVAL = 200; // ~5 FPS for smoother experience
+      const SEND_INTERVAL = 200;
 
-      // Get geolocation once
+      // Get geolocation
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition((pos) => {
           latitude = pos.coords.latitude;
           longitude = pos.coords.longitude;
+          geoDiv.innerText = `📍 ${latitude.toFixed(4)}, ${longitude.toFixed(
+            4
+          )}`;
         });
       }
 
       function toggleObjectInput() {
         objectInput.style.display =
-          modeSelect.value === "object" ? "inline-block" : "none";
+          modeSelect.value === "object" ? "block" : "none";
       }
       modeSelect.addEventListener("change", toggleObjectInput);
       toggleObjectInput();
 
-      // Upload reference face
+      // Upload face reference
       faceUpload.addEventListener("change", () => {
         const file = faceUpload.files[0];
         if (!file) return;
+        facePreview.src = URL.createObjectURL(file);
+        facePreview.style.display = "block";
+        uploadStatus.textContent = "Uploading...";
         const formData = new FormData();
         formData.append("image", file);
+
         fetch("http://127.0.0.1:5000/upload_face", {
           method: "POST",
           body: formData,
         })
           .then((res) => res.json())
-          .then((data) => alert(data.status || data.error))
-          .catch((err) => console.error("Upload error:", err));
+          .then((data) => {
+            if (data.status) {
+              uploadStatus.textContent = "✅ " + data.status;
+              uploadStatus.style.color = "#8bc34a";
+            } else {
+              uploadStatus.textContent =
+                "❌ " + (data.error || "Upload failed");
+              uploadStatus.style.color = "#f44336";
+            }
+          })
+          .catch((err) => {
+            uploadStatus.textContent = "❌ Upload error";
+            uploadStatus.style.color = "#f44336";
+          });
       });
 
-      // Start webcam
+      // Webcam start
       navigator.mediaDevices
         .getUserMedia({ video: { facingMode: "user" } })
         .then((stream) => (video.srcObject = stream));
 
-      // Smooth async loop (throttled)
+      // Frame processing loop
       async function processFrame() {
         const now = performance.now();
         if (now - lastSentTime < SEND_INTERVAL) {
@@ -164,13 +298,13 @@
           return;
         }
 
-        // Resize to smaller frame for faster processing
         const scaledWidth = 320;
         const scaledHeight =
           (video.videoHeight / video.videoWidth) * scaledWidth;
         canvas.width = scaledWidth;
         canvas.height = scaledHeight;
 
+        // Draw mirrored frame
         ctx.save();
         ctx.scale(-1, 1);
         ctx.drawImage(video, -scaledWidth, 0, scaledWidth, scaledHeight);
@@ -187,39 +321,19 @@
               image: dataURL,
               mode: modeSelect.value,
               object_name: objName,
-              latitude: latitude,
-              longitude: longitude,
+              latitude,
+              longitude,
             }),
           });
           const data = await res.json();
 
           if (data.image) output.src = data.image;
           if (data.detected?.length) {
-            const first = data.detected[0];
-            let color = "white";
-            if (first === "happy") color = "limegreen";
-            else if (first === "sad") color = "skyblue";
-            else if (first === "angry") color = "red";
-            detectedDiv.style.color = color;
             detectedDiv.innerText = "Detected: " + data.detected.join(", ");
-          } else detectedDiv.innerText = "";
-
-          if (data.geo_info?.latitude)
-            geoDiv.innerText = `📍 Location: ${data.geo_info.latitude}, ${data.geo_info.longitude}`;
+          } else detectedDiv.innerText = "No detection";
 
           if (data.snapshot) snapshotImg.src = data.snapshot;
           if (data.sketch) sketchImg.src = data.sketch;
-
-          if (
-            data.object_snapshot &&
-            data.object_snapshot !== lastObjectShown
-          ) {
-            const img = document.createElement("img");
-            img.src = data.object_snapshot;
-            img.alt = "Detected Object";
-            objectGallery.appendChild(img);
-            lastObjectShown = data.object_snapshot;
-          }
         } catch (err) {
           console.error("Fetch error:", err);
         }
@@ -231,4 +345,3 @@
     </script>
   </body>
 </html>
-<!--  -->

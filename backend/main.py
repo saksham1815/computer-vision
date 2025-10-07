@@ -1,14 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import cv2, base64, numpy as np, os, time
+import cv2, base64, numpy as np, os, time, uuid
 from ultralytics import YOLO
 import face_recognition
 from deepface import DeepFace
 import easyocr
 
+# Initialize models
 reader = easyocr.Reader(['en'])
 yolo_model = YOLO("yolov8n.pt")
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
 try:
     from utils.hand_utils import detect_hands
@@ -26,35 +26,52 @@ except ImportError:
 app = Flask(__name__)
 CORS(app)
 
+# Globals
 draw_points = []
 mode = "gesture"
 reference_encoding = None
 target_object = None
 last_detection_time = 0
-last_detected_label = None
-SAVE_DIR = "snapshots"
-os.makedirs(SAVE_DIR, exist_ok=True)
 last_face_results = {"locations": [], "labels": [], "snapshot": None, "sketch": None}
 
+SAVE_DIR = "snapshots"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+
+# ---------- Utility Functions ----------
 def decode_image(img_base64):
+    """Decode base64 -> OpenCV image"""
     if "," in img_base64:
         img_base64 = img_base64.split(",")[1]
     img_data = base64.b64decode(img_base64)
     np_arr = np.frombuffer(img_data, np.uint8)
-    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-    return img if img is not None else np.zeros((480, 640, 3), dtype=np.uint8)
+    return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
 
 def encode_image(img):
+    """Encode OpenCV image -> base64"""
     _, buffer = cv2.imencode(".jpg", img)
     return "data:image/jpeg;base64," + base64.b64encode(buffer).decode()
 
+
+def save_image(img, prefix="capture"):
+    """Save image to disk with unique name"""
+    filename = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+    path = os.path.join(SAVE_DIR, filename)
+    cv2.imwrite(path, img)
+    return path
+
+
 def sketch_face(face_img):
+    """Convert face to sketch-like grayscale version"""
     gray = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
     inv = 255 - gray
     blur = cv2.GaussianBlur(inv, (21, 21), 0)
     sketch = cv2.divide(gray, 255 - blur, scale=256)
     return cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
+
+# ---------- Face Upload ----------
 @app.route("/upload_face", methods=["POST"])
 def upload_face():
     global reference_encoding
@@ -65,14 +82,17 @@ def upload_face():
     np_img = np.frombuffer(file.read(), np.uint8)
     img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
     encodings = face_recognition.face_encodings(img)
+
     if len(encodings) > 0:
         reference_encoding = encodings[0]
         return jsonify({"status": "Reference face stored"})
     return jsonify({"error": "No face found in uploaded image"}), 400
 
+
+# ---------- Main Process Route ----------
 @app.route("/process", methods=["POST"])
 def process():
-    global mode, draw_points, reference_encoding, last_detection_time, last_detected_label, target_object, last_face_results
+    global mode, draw_points, reference_encoding, target_object, last_detection_time, last_face_results
 
     try:
         data = request.json
@@ -87,39 +107,50 @@ def process():
         detected_labels = []
         snapshot_b64, sketch_b64, object_snapshot_b64 = None, None, None
 
+        # --- Mode: Gesture ---
         if mode == "gesture":
             frame = detect_hands(frame)
 
+        # --- Mode: Sign Language ---
         elif mode == "sign":
             sign = recognize_sign(frame)
             cv2.putText(frame, f"Sign: {sign}", (10, 50),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+        # --- Mode: Air Draw ---
         elif mode == "draw":
             frame, draw_points = air_draw(frame, draw_points)
 
+        # --- Mode: Mouse Control ---
         elif mode == "mouse":
             control_mouse(frame)
 
+        # --- Mode: Pose ---
         elif mode == "pose":
             frame = detect_pose(frame)
 
+        # --- Mode: Object Detection ---
         elif mode == "object":
             target_object = data.get("object_name", "").strip().lower() or target_object
             results = yolo_model(frame)
-            now = time.time()
-
             for r in results:
                 for box in r.boxes:
                     cls_id = int(box.cls[0])
                     label = yolo_model.names[cls_id].lower()
                     detected_labels.append(label)
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
                     color = (0, 255, 0) if (target_object and label == target_object) else (255, 255, 0)
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(frame, label, (x1, y1 - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
+                    # Save snapshot of target object
+                    if target_object and label == target_object:
+                        crop = frame[y1:y2, x1:x2]
+                        save_image(crop, "object")
+                        object_snapshot_b64 = encode_image(crop)
+
+        # --- Mode: Emotion Detection ---
         elif mode == "emotion":
             try:
                 result = DeepFace.analyze(frame, actions=['emotion'], enforce_detection=False)
@@ -127,70 +158,83 @@ def process():
                 cv2.putText(frame, f"Emotion: {emotion}", (10, 50),
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 detected_labels.append(emotion)
-            except Exception as e:
+            except Exception:
                 detected_labels.append("Error")
 
+        # --- Mode: OCR ---
         elif mode == "ocr":
             try:
                 results = reader.readtext(frame)
-                extracted_texts = [t for (_, t, _) in results]
                 for (bbox, text, conf) in results:
                     (tl, tr, br, bl) = bbox
                     tl, br = tuple(map(int, tl)), tuple(map(int, br))
                     cv2.rectangle(frame, tl, br, (0, 255, 0), 2)
                     cv2.putText(frame, text, (tl[0], tl[1] - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                detected_labels.extend(extracted_texts or ["No text found"])
-            except Exception as e:
+                    detected_labels.append(text)
+            except Exception:
                 detected_labels.append("OCR Error")
 
+        # --- Mode: Face Detection ---
         elif mode == "face":
             now = time.time()
             if now - last_detection_time > 0.5:
-                small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-                rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-                locs = face_recognition.face_locations(rgb)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                locs = face_recognition.face_locations(rgb, model="hog")
                 encs = face_recognition.face_encodings(rgb, locs)
                 new_labels = []
+
                 for (top, right, bottom, left), enc in zip(locs, encs):
-                    top, right, bottom, left = [v * 4 for v in (top, right, bottom, left)]
                     label = "Unknown"
                     if reference_encoding is not None:
-                        match = face_recognition.compare_faces([reference_encoding], enc)
+                        match = face_recognition.compare_faces([reference_encoding], enc, tolerance=0.6)
                         if match[0]:
                             label = "Matched"
                             face_crop = frame[top:bottom, left:right]
+                            sketch_img = sketch_face(face_crop)
+
+                            # Save both versions
+                            save_image(face_crop, "face")
+                            save_image(sketch_img, "sketch")
+
                             snapshot_b64 = encode_image(face_crop)
-                            sketch_b64 = encode_image(sketch_face(face_crop))
-                    new_labels.append(label)
+                            sketch_b64 = encode_image(sketch_img)
+
                     cv2.rectangle(frame, (left, top), (right, bottom), (255, 0, 0), 2)
                     cv2.putText(frame, label, (left, top - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    new_labels.append(label)
+
                 last_face_results = {"locations": locs, "labels": new_labels,
                                      "snapshot": snapshot_b64, "sketch": sketch_b64}
                 last_detection_time = now
+
             else:
                 for (top, right, bottom, left), label in zip(
                     last_face_results["locations"], last_face_results["labels"]
                 ):
-                    top, right, bottom, left = [v * 4 for v in (top, right, bottom, left)]
                     cv2.rectangle(frame, (left, top), (right, bottom), (255, 0, 0), 2)
                     cv2.putText(frame, label, (left, top - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 snapshot_b64 = last_face_results.get("snapshot")
                 sketch_b64 = last_face_results.get("sketch")
+
             detected_labels.extend(last_face_results["labels"])
 
+        # ---------- Response ----------
         return jsonify({
             "image": encode_image(frame),
             "detected": detected_labels,
             "snapshot": snapshot_b64,
             "sketch": sketch_b64,
+            "object_snapshot": object_snapshot_b64,
             "geo_info": geo_info
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# ---------- Run ----------
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
