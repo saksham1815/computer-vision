@@ -28,7 +28,7 @@ The project supports:
 1. Clone the repo (or place files in a folder):
 
 ```bash
-git clone <https://github.com/saksham1815/computer-vision.git>
+git clone <https://github.com/saksham1815/AetherEye.git>
 cd project-root
 ```
 
