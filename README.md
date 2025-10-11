@@ -2,7 +2,7 @@
 
 > Full-stack local web app for real-time webcam-based computer vision: gesture recognition, sign language, air drawing, mouse control, pose estimation, object detection (YOLOv8), face recognition & sketching, emotion detection (DeepFace), and OCR (EasyOCR).
 
----
+----
 
 ## Overview
 
